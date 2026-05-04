@@ -12,7 +12,7 @@ spec:
       {
         "output_type": "text",
         "input_type": "text",
-        "input_value": "Pod ${podName} no namespace ${namespace} com problema ${problemType}.\nContainer: ${containerName}\nImage: ${imageName}\nRestarts: ${restartCount}\nMessage: ${message}\n\nEvents:\n${events}\n\nLogs:\n${logs}"
+        "input_value": "{\"podName\":\"${podName}\",\"namespace\":\"${namespace}\",\"problemType\":\"${problemType}\",\"containerName\":\"${containerName}\",\"imageName\":\"${imageName}\",\"restartCount\":${restartCount},\"events\":\"${events}\",\"logs\":\"${logs}\"}"
       }
   detections:
     crashLoopBackOff: true

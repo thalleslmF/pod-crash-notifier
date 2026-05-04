@@ -47,10 +47,21 @@ public class WebhookNotifier {
 
     String resolveTemplate(String template, PodProblem p) {
         return template
-                .replace("${podName}", p.podName()).replace("${namespace}", p.namespace())
-                .replace("${problemType}", p.problemType()).replace("${containerName}", p.containerName())
-                .replace("${imageName}", p.imageName()).replace("${restartCount}", String.valueOf(p.restartCount()))
-                .replace("${message}", p.message()).replace("${events}", p.events()).replace("${logs}", p.logs());
+                .replace("${podName}", escJson(p.podName()))
+                .replace("${namespace}", escJson(p.namespace()))
+                .replace("${problemType}", escJson(p.problemType()))
+                .replace("${containerName}", escJson(p.containerName()))
+                .replace("${imageName}", escJson(p.imageName()))
+                .replace("${restartCount}", String.valueOf(p.restartCount()))
+                .replace("${message}", escJson(p.message()))
+                .replace("${events}", escJson(p.events()))
+                .replace("${logs}", escJson(p.logs()));
+    }
+
+    private String escJson(String v) {
+        if (v == null) return "";
+        return v.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
     }
 
     String buildPayload(String bodyTemplate, PodProblem p) {
