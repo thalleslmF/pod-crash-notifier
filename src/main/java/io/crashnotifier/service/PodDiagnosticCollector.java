@@ -18,9 +18,9 @@ public class PodDiagnosticCollector {
         this.client = client;
     }
 
-    public PodProblem enrich(PodProblem p) {
+    public PodProblem enrich(PodProblem p, String podPhase) {
         String events = collectEvents(p.podName(), p.namespace());
-        String logs = collectLogs(p.podName(), p.namespace(), p.containerName());
+        String logs = "Running".equals(podPhase) ? collectLogs(p.podName(), p.namespace(), p.containerName()) : "";
         return new PodProblem(p.podName(), p.namespace(), p.problemType(),
                 p.containerName(), p.imageName(), p.restartCount(), p.message(), events, logs);
     }
