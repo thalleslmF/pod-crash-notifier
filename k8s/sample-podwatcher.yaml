@@ -1,0 +1,27 @@
+apiVersion: crash-notifier.io/v1
+kind: PodWatcher
+metadata:
+  name: my-watcher
+spec:
+  webhook:
+    url: "https://flow.ciandt.com/advanced-flows/api/v1/run/YOUR-FLOW-ID?version=production&stream=false"
+    headers:
+      - name: "FlowToken"
+        value: "${FLOW_TOKEN}"
+    bodyTemplate: |
+      {
+        "output_type": "text",
+        "input_type": "text",
+        "input_value": "Pod ${podName} no namespace ${namespace} com problema ${problemType}.\nContainer: ${containerName}\nImage: ${imageName}\nRestarts: ${restartCount}\nMessage: ${message}\n\nEvents:\n${events}\n\nLogs:\n${logs}"
+      }
+  detections:
+    crashLoopBackOff: true
+    restartThreshold: 5
+    healthCheckFailing: true
+    unschedulable: true
+    imagePullError: true
+    oomKilled: true
+    createContainerError: true
+    initContainerFailing: true
+    pendingThresholdSeconds: 120
+  resetCron: "0 0 * * *"

@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pod-crash-notifier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-crash-notifier
+  template:
+    metadata:
+      labels:
+        app: pod-crash-notifier
+    spec:
+      serviceAccountName: pod-crash-notifier
+      containers:
+        - name: operator
+          image: pod-crash-notifier:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: FLOW_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: flow-token-secret
+                  key: token
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
