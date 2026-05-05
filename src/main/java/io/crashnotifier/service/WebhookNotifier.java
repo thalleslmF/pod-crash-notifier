@@ -2,6 +2,7 @@ package io.crashnotifier.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.crashnotifier.crd.AuthConfig;
 import io.crashnotifier.crd.WebhookConfig;
 import io.crashnotifier.crd.WebhookHeader;
 import io.crashnotifier.domain.PodProblem;
@@ -19,30 +20,93 @@ public class WebhookNotifier {
     private static final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
     private static final ObjectMapper mapper = new ObjectMapper();
 
-    public boolean notify(WebhookConfig config, PodProblem problem) {
+    private final TokenRefresher tokenRefresher = new TokenRefresher();
+
+    /**
+     * Result of a notify call, including whether auth tokens were refreshed.
+     */
+    public record NotifyResult(boolean webhookSent, boolean tokensRefreshed, String newToken, String newRefreshToken) {
+        public static NotifyResult success() { return new NotifyResult(true, false, null, null); }
+        public static NotifyResult failure() { return new NotifyResult(false, false, null, null); }
+        public static NotifyResult successWithRefresh(String token, String refreshToken) {
+            return new NotifyResult(true, true, token, refreshToken);
+        }
+        public static NotifyResult failureWithRefresh(String token, String refreshToken) {
+            return new NotifyResult(false, true, token, refreshToken);
+        }
+    }
+
+    public NotifyResult notify(WebhookConfig config, PodProblem problem) {
+        AuthConfig auth = config.getAuth();
+        String currentToken = null;
+        String currentRefreshToken = null;
+        boolean tokensRefreshed = false;
+
+        // Refresh auth tokens if auth is configured
+        if (auth != null) {
+            var refreshResult = tokenRefresher.refresh(auth);
+            if (refreshResult.isPresent()) {
+                var result = refreshResult.get();
+                currentToken = result.token();
+                currentRefreshToken = result.refreshToken();
+                tokensRefreshed = result.changed();
+            } else {
+                // Refresh failed but we can still try with existing token
+                currentToken = auth.getToken();
+                currentRefreshToken = auth.getRefreshToken();
+            }
+        }
+
         try {
             String payload = buildPayload(config.getBodyTemplate(), problem);
+            log.debug("Webhook payload for {}/{}: {}", problem.namespace(), problem.podName(), payload);
             var rb = HttpRequest.newBuilder()
                     .uri(URI.create(config.getUrl()))
                     .header("Content-Type", "application/json")
                     .timeout(Duration.ofSeconds(30))
                     .POST(HttpRequest.BodyPublishers.ofString(payload));
+
             if (config.getHeaders() != null) {
                 for (WebhookHeader h : config.getHeaders()) {
-                    if (h.getValue() != null) rb.header(h.getName(), h.getValue());
+                    if (h.getValue() != null) {
+                        String value = resolveAuthHeaderPlaceholders(h.getValue(), currentToken, currentRefreshToken);
+                        rb.header(h.getName(), value);
+                    }
                 }
             }
+
             var resp = httpClient.send(rb.build(), HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
                 log.info("Webhook sent for pod {}/{}", problem.namespace(), problem.podName());
-                return true;
+                return tokensRefreshed
+                        ? NotifyResult.successWithRefresh(currentToken, currentRefreshToken)
+                        : NotifyResult.success();
             }
             log.error("Webhook status {} for {}/{}: {}", resp.statusCode(), problem.namespace(), problem.podName(), resp.body());
-            return false;
+            return tokensRefreshed
+                    ? NotifyResult.failureWithRefresh(currentToken, currentRefreshToken)
+                    : NotifyResult.failure();
         } catch (Exception e) {
             log.error("Webhook failed for {}/{}: {}", problem.namespace(), problem.podName(), e.getMessage());
-            return false;
+            return tokensRefreshed
+                    ? NotifyResult.failureWithRefresh(currentToken, currentRefreshToken)
+                    : NotifyResult.failure();
         }
+    }
+
+    /**
+     * Replaces ${auth.token} and ${auth.refreshToken} in header values.
+     */
+    String resolveAuthHeaderPlaceholders(String value, String token, String refreshToken) {
+        if (value == null) return null;
+        String result = value;
+        if (token != null) {
+            result = result.replace("${auth.token}", token);
+        }
+        if (refreshToken != null) {
+            result = result.replace("${auth.refreshToken}", refreshToken);
+        }
+        return result;
     }
 
     String resolveTemplate(String template, PodProblem p) {

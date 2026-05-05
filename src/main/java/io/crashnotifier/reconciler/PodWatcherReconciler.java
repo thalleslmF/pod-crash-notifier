@@ -13,25 +13,19 @@ import io.crashnotifier.service.WebhookNotifier;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.events.v1.Event;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.javaoperatorsdk.operator.api.config.informer.InformerEventSourceConfiguration;
 import io.javaoperatorsdk.operator.api.reconciler.Context;
-import io.javaoperatorsdk.operator.api.reconciler.EventSourceContext;
 import io.javaoperatorsdk.operator.api.reconciler.Reconciler;
 import io.javaoperatorsdk.operator.api.reconciler.UpdateControl;
-import io.javaoperatorsdk.operator.processing.event.ResourceID;
-import io.javaoperatorsdk.operator.processing.event.source.EventSource;
-import io.javaoperatorsdk.operator.processing.event.source.SecondaryToPrimaryMapper;
-import io.javaoperatorsdk.operator.processing.event.source.informer.InformerEventSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 public class PodWatcherReconciler implements Reconciler<PodWatcher> {
     private static final Logger log = LoggerFactory.getLogger(PodWatcherReconciler.class);
+    private static final Duration POLL_INTERVAL = Duration.ofSeconds(10);
 
     private final PodHealthEvaluator evaluator = new PodHealthEvaluator();
     private final AlertDeduplicator deduplicator = new AlertDeduplicator();
@@ -44,27 +38,6 @@ public class PodWatcherReconciler implements Reconciler<PodWatcher> {
     }
 
     @Override
-    public List<EventSource<?, PodWatcher>> prepareEventSources(EventSourceContext<PodWatcher> context) {
-        SecondaryToPrimaryMapper<Pod> podToPodWatcher = pod -> {
-            // Map every pod event to all PodWatcher resources in the same namespace
-            var client = context.getClient();
-            return client.resources(PodWatcher.class)
-                    .inNamespace(pod.getMetadata().getNamespace())
-                    .list().getItems().stream()
-                    .map(ResourceID::fromResource)
-                    .collect(Collectors.toSet());
-        };
-
-        var config = InformerEventSourceConfiguration
-                .from(Pod.class, PodWatcher.class)
-                .withSecondaryToPrimaryMapper(podToPodWatcher)
-                .withNamespacesInheritedFromController()
-                .build();
-
-        return List.of(new InformerEventSource<>(config, context));
-    }
-
-    @Override
     public UpdateControl<PodWatcher> reconcile(PodWatcher resource, Context<PodWatcher> context) {
         KubernetesClient client = context.getClient();
         if (diagnosticCollector == null) {
@@ -73,7 +46,7 @@ public class PodWatcherReconciler implements Reconciler<PodWatcher> {
 
         PodWatcherSpec spec = resource.getSpec();
         String namespace = resource.getMetadata().getNamespace();
-        log.info("Reconciling PodWatcher {}/{}", namespace, resource.getMetadata().getName());
+        log.debug("Reconciling PodWatcher {}/{}", namespace, resource.getMetadata().getName());
 
         // Schedule alert reset idempotently
         String resetCron = spec.getResetCron() != null ? spec.getResetCron() : "0 0 * * *";
@@ -86,16 +59,20 @@ public class PodWatcherReconciler implements Reconciler<PodWatcher> {
 
         // List all pods in namespace
         List<Pod> pods = client.pods().inNamespace(namespace).list().getItems();
+        log.debug("PodWatcher {}/{}: found {} pods in namespace", namespace, resource.getMetadata().getName(), pods.size());
 
         // Evaluate each pod
         List<PodProblem> allProblems = new ArrayList<>();
         for (Pod pod : pods) {
-
             List<Event> events = diagnosticCollector.getEventsForPod(
                     pod.getMetadata().getName(), namespace);
             List<PodProblem> problems = evaluator.evaluate(pod, spec.getDetections(), events);
             allProblems.addAll(problems);
         }
+
+        log.debug("PodWatcher {}/{}: evaluation found {} total problems, already alerted: {}",
+                namespace, resource.getMetadata().getName(), allProblems.size(),
+                resource.getStatus().getAlertedPods().size());
 
         // Deduplicate
         List<PodProblem> newProblems = deduplicator.filterNew(
@@ -103,7 +80,7 @@ public class PodWatcherReconciler implements Reconciler<PodWatcher> {
 
         if (newProblems.isEmpty()) {
             log.debug("No new problems for PodWatcher {}/{}", namespace, resource.getMetadata().getName());
-            return UpdateControl.noUpdate();
+            return UpdateControl.<PodWatcher>noUpdate().rescheduleAfter(POLL_INTERVAL);
         }
 
         log.info("Found {} new problems for PodWatcher {}/{}", newProblems.size(),
@@ -111,6 +88,7 @@ public class PodWatcherReconciler implements Reconciler<PodWatcher> {
 
         // Enrich, notify, and track
         List<AlertedPod> newAlerted = new ArrayList<>();
+        boolean tokensRefreshed = false;
         for (PodProblem problem : newProblems) {
             String podPhase = pods.stream()
                     .filter(p -> p.getMetadata().getName().equals(problem.podName()))
@@ -118,7 +96,13 @@ public class PodWatcherReconciler implements Reconciler<PodWatcher> {
                     .findFirst().orElse("");
             PodProblem enriched = diagnosticCollector.enrich(problem, podPhase);
             if (spec.getWebhook() != null && spec.getWebhook().getUrl() != null) {
-                notifier.notify(spec.getWebhook(), enriched);
+                var result = notifier.notify(spec.getWebhook(), enriched);
+                if (result.tokensRefreshed()) {
+                    // Update auth tokens in the spec for persistence
+                    spec.getWebhook().getAuth().setToken(result.newToken());
+                    spec.getWebhook().getAuth().setRefreshToken(result.newRefreshToken());
+                    tokensRefreshed = true;
+                }
             }
             newAlerted.add(new AlertedPod(enriched.podName(), enriched.problemType()));
         }
@@ -128,6 +112,12 @@ public class PodWatcherReconciler implements Reconciler<PodWatcher> {
         allAlerted.addAll(newAlerted);
         resource.getStatus().setAlertedPods(allAlerted);
 
-        return UpdateControl.patchStatus(resource);
+        // Patch spec if tokens were refreshed
+        if (tokensRefreshed) {
+            log.info("Auth tokens refreshed, patching PodWatcher {}/{}", namespace, resource.getMetadata().getName());
+            client.resource(resource).inNamespace(namespace).patch();
+        }
+
+        return UpdateControl.<PodWatcher>patchStatus(resource).rescheduleAfter(POLL_INTERVAL);
     }
 }

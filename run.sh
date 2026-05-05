@@ -16,7 +16,10 @@ case "${1:-run}" in
   compile)
     mvn compile
     ;;
+  e2e)
+    mvn verify -Pe2e
+    ;;
   *)
-    echo "Usage: ./run.sh [run|crd|test|compile]"
+    echo "Usage: ./run.sh [run|crd|test|e2e|compile]"
     ;;
 esac

@@ -1,0 +1,34 @@
+{{- if .Values.podWatcher.enabled }}
+apiVersion: crash-notifier.io/v1
+kind: PodWatcher
+metadata:
+  name: {{ .Values.podWatcher.name }}
+  namespace: {{ .Values.namespace }}
+spec:
+  webhook:
+    url: {{ .Values.podWatcher.webhook.url | quote }}
+    {{- if .Values.podWatcher.webhook.headers }}
+    headers:
+      {{- toYaml .Values.podWatcher.webhook.headers | nindent 6 }}
+    {{- end }}
+    {{- if .Values.podWatcher.webhook.bodyTemplate }}
+    bodyTemplate: |
+      {{- .Values.podWatcher.webhook.bodyTemplate | nindent 6 }}
+    {{- end }}
+    {{- if .Values.podWatcher.webhook.auth.enabled }}
+    auth:
+      refreshUrl: {{ .Values.podWatcher.webhook.auth.refreshUrl | quote }}
+      refreshBody: {{ .Values.podWatcher.webhook.auth.refreshBody | quote }}
+      tokenJsonPath: {{ .Values.podWatcher.webhook.auth.tokenJsonPath | quote }}
+      refreshTokenJsonPath: {{ .Values.podWatcher.webhook.auth.refreshTokenJsonPath | quote }}
+      token: {{ .Values.podWatcher.webhook.auth.token | quote }}
+      refreshToken: {{ .Values.podWatcher.webhook.auth.refreshToken | quote }}
+    {{- end }}
+  detections:
+    crashLoopBackOff: {{ .Values.podWatcher.detections.crashLoopBackOff }}
+    restartThreshold: {{ .Values.podWatcher.detections.restartThreshold }}
+    oomKilled: {{ .Values.podWatcher.detections.oomKilled }}
+    unschedulable: {{ .Values.podWatcher.detections.unschedulable }}
+    pendingThresholdSeconds: {{ .Values.podWatcher.detections.pendingThresholdSeconds }}
+  resetCron: {{ .Values.podWatcher.resetCron | quote }}
+{{- end }}

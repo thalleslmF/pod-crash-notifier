@@ -1,0 +1,35 @@
+namespace: crash-notifier
+
+replicaCount: 1
+
+image:
+  repository: operator-crash-notifier
+  tag: local
+  pullPolicy: Never
+
+serviceAccount:
+  name: pod-crash-notifier
+
+# Webhook configuration for PodWatcher CR
+podWatcher:
+  enabled: true
+  name: default-watcher
+  webhook:
+    url: ""
+    headers: []
+    bodyTemplate: ""
+    auth:
+      enabled: false
+      refreshUrl: ""
+      refreshBody: ""
+      tokenJsonPath: ""
+      refreshTokenJsonPath: ""
+      token: ""
+      refreshToken: ""
+  detections:
+    crashLoopBackOff: true
+    restartThreshold: 5
+    oomKilled: true
+    unschedulable: true
+    pendingThresholdSeconds: 30
+  resetCron: "0 0 * * *"

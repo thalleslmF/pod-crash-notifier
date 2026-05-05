@@ -1,3 +1,10 @@
 target/
 .idea/
 *.iml
+
+# Local files with real credentials - never commit
+helm/operator-crash-notifier/values-local.yaml
+local-test.sh
+**/*.local.yaml
+.env
+*.env

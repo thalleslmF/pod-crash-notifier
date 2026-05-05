@@ -28,10 +28,18 @@ public class PodHealthEvaluator {
         List<PodProblem> problems = new ArrayList<>();
         String podName = pod.getMetadata().getName();
         String namespace = pod.getMetadata().getNamespace();
-        if (pod.getStatus() == null) return problems;
+        String phase = pod.getStatus() != null ? pod.getStatus().getPhase() : "null";
+        if (pod.getStatus() == null) {
+            log.debug("Pod {}/{} has no status, skipping evaluation", namespace, podName);
+            return problems;
+        }
 
-        if (config.isUnschedulable() && "Pending".equals(pod.getStatus().getPhase())) {
+        log.debug("Evaluating pod {}/{} phase={}", namespace, podName, phase);
+
+        if (config.isUnschedulable() && "Pending".equals(phase)) {
             if (!isPodOlderThan(pod, config.getPendingThresholdSeconds())) {
+                log.debug("Pod {}/{} is Pending but not yet older than {}s threshold, skipping Unschedulable check",
+                        namespace, podName, config.getPendingThresholdSeconds());
                 checkInitContainers(pod, config, podName, namespace, problems);
                 return problems;
             }
@@ -50,25 +58,43 @@ public class PodHealthEvaluator {
         }
 
         checkInitContainers(pod, config, podName, namespace, problems);
-        if (pod.getStatus().getContainerStatuses() == null) return problems;
+        if (pod.getStatus().getContainerStatuses() == null) {
+            log.debug("Pod {}/{} has no container statuses (phase={})", namespace, podName, phase);
+            return problems;
+        }
 
         for (ContainerStatus cs : pod.getStatus().getContainerStatuses()) {
             String cn = cs.getName(), img = cs.getImage();
             int restarts = cs.getRestartCount();
+            String stateDesc = describeState(cs);
+            log.debug("Pod {}/{} container={} restarts={} state={}", namespace, podName, cn, restarts, stateDesc);
 
             if (config.isOomKilled() && isOomKilled(cs)) {
+                log.info("Pod {}/{} container={}: OOMKilled detected (exitCode={})",
+                        namespace, podName, cn, cs.getLastState().getTerminated().getExitCode());
                 problems.add(new PodProblem(podName, namespace, "OOMKilled", cn, img, restarts,
                         "Exit code: " + cs.getLastState().getTerminated().getExitCode(), "", ""));
                 continue;
             }
 
-            if (cs.getState() == null) continue;
+            if (cs.getState() == null) {
+                log.debug("Pod {}/{} container={}: state is null, skipping", namespace, podName, cn);
+                continue;
+            }
 
             if (cs.getState().getWaiting() != null) {
                 String reason = cs.getState().getWaiting().getReason();
                 String problemType = WAITING_REASON_TO_PROBLEM.get(reason);
-                if (problemType != null && isDetectionEnabled(config, problemType)) {
+                if (problemType == null) {
+                    log.debug("Pod {}/{} container={}: waiting reason='{}' not a known problem, skipping",
+                            namespace, podName, cn, reason);
+                } else if (!isDetectionEnabled(config, problemType)) {
+                    log.debug("Pod {}/{} container={}: detection for '{}' is disabled, skipping",
+                            namespace, podName, cn, problemType);
+                } else {
                     String waitMsg = cs.getState().getWaiting().getMessage() != null ? cs.getState().getWaiting().getMessage() : "";
+                    log.info("Pod {}/{} container={}: problem detected type={} reason={} msg={}",
+                            namespace, podName, cn, problemType, reason, waitMsg);
                     problems.add(new PodProblem(podName, namespace, problemType, cn, img, restarts, waitMsg, "", ""));
                     continue;
                 }
@@ -76,18 +102,47 @@ public class PodHealthEvaluator {
 
             if (cs.getState().getRunning() != null) {
                 if (restarts > config.getRestartThreshold()) {
+                    log.info("Pod {}/{} container={}: RestartThreshold exceeded (restarts={} > threshold={})",
+                            namespace, podName, cn, restarts, config.getRestartThreshold());
                     problems.add(new PodProblem(podName, namespace, "RestartThreshold", cn, img, restarts, "", "", ""));
                     continue;
+                } else {
+                    log.debug("Pod {}/{} container={}: running, restarts={} <= threshold={}, checking health",
+                            namespace, podName, cn, restarts, config.getRestartThreshold());
                 }
                 if (config.isHealthCheckFailing() && !Boolean.TRUE.equals(cs.getReady())) {
                     String unhealthyMsg = findUnhealthyEvent(podEvents);
                     if (unhealthyMsg != null) {
+                        log.info("Pod {}/{} container={}: HealthCheckFailing detected msg={}",
+                                namespace, podName, cn, unhealthyMsg);
                         problems.add(new PodProblem(podName, namespace, "HealthCheckFailing", cn, img, restarts, unhealthyMsg, "", ""));
+                    } else {
+                        log.debug("Pod {}/{} container={}: not ready but no Unhealthy event found",
+                                namespace, podName, cn);
                     }
                 }
             }
+
+            if (cs.getState().getTerminated() != null) {
+                log.debug("Pod {}/{} container={}: terminated reason={}, no specific detection matched",
+                        namespace, podName, cn, cs.getState().getTerminated().getReason());
+            }
+        }
+        if (problems.isEmpty()) {
+            log.debug("Pod {}/{} evaluated: no problems detected", namespace, podName);
+        } else {
+            log.info("Pod {}/{} evaluated: {} problem(s) found: {}", namespace, podName, problems.size(),
+                    problems.stream().map(PodProblem::problemType).toList());
         }
         return problems;
+    }
+
+    private String describeState(ContainerStatus cs) {
+        if (cs.getState() == null) return "null";
+        if (cs.getState().getRunning() != null) return "Running";
+        if (cs.getState().getWaiting() != null) return "Waiting(" + cs.getState().getWaiting().getReason() + ")";
+        if (cs.getState().getTerminated() != null) return "Terminated(" + cs.getState().getTerminated().getReason() + ")";
+        return "unknown";
     }
 
     private boolean isDetectionEnabled(DetectionConfig config, String problemType) {

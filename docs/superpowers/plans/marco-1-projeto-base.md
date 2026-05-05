@@ -1,3 +1,16 @@
+# Marco 1: Projeto Base
+
+> **Entregavel:** Projeto Maven compila, main class existe, dependencias resolvidas.
+
+**Parent plan:** `2026-04-30-pod-crash-notifier.md`
+
+---
+
+## Step 1.1: pom.xml + OperatorApplication
+
+- [ ] Criar `pom.xml` com dependencias: JOSDK 5.x, Fabric8, Jackson, Logback, JUnit 5, Mockito, crd-generator-apt
+
+```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -20,28 +33,7 @@
         <mockito.version>5.11.0</mockito.version>
         <slf4j.version>2.0.12</slf4j.version>
         <logback.version>1.5.3</logback.version>
-        <docker-java.version>3.5.2</docker-java.version>
     </properties>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>com.github.docker-java</groupId>
-                <artifactId>docker-java-api</artifactId>
-                <version>${docker-java.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.github.docker-java</groupId>
-                <artifactId>docker-java-transport-zerodep</artifactId>
-                <version>${docker-java.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.github.docker-java</groupId>
-                <artifactId>docker-java-transport</artifactId>
-                <version>${docker-java.version}</version>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -93,31 +85,6 @@
             <version>${mockito.version}</version>
             <scope>test</scope>
         </dependency>
-        <!-- E2E test dependencies -->
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>k3s</artifactId>
-            <version>1.21.4</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>1.21.4</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.wiremock</groupId>
-            <artifactId>wiremock-standalone</artifactId>
-            <version>3.10.0</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.awaitility</groupId>
-            <artifactId>awaitility</artifactId>
-            <version>4.2.2</version>
-            <scope>test</scope>
-        </dependency>
     </dependencies>
 
     <build>
@@ -135,11 +102,6 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
-                <configuration>
-                    <excludes>
-                        <exclude>**/e2e/**</exclude>
-                    </excludes>
-                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -153,54 +115,55 @@
                     </archive>
                 </configuration>
             </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.5.2</version>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
-                        <configuration>
-                            <transformers>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>io.crashnotifier.OperatorApplication</mainClass>
-                                </transformer>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
-                            </transformers>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
-    <profiles>
-        <profile>
-            <id>e2e</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-failsafe-plugin</artifactId>
-                        <version>3.5.2</version>
-                        <executions>
-                            <execution>
-                                <goals>
-                                    <goal>integration-test</goal>
-                                    <goal>verify</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                        <configuration>
-                            <includes>
-                                <include>**/e2e/*Test.java</include>
-                            </includes>
-                        </configuration>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-    </profiles>
 </project>
+```
+
+- [ ] Criar `src/main/java/io/crashnotifier/OperatorApplication.java` (main class basica, sem reconciler ainda)
+
+```java
+package io.crashnotifier;
+
+import io.javaoperatorsdk.operator.Operator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class OperatorApplication {
+    private static final Logger log = LoggerFactory.getLogger(OperatorApplication.class);
+
+    public static void main(String[] args) {
+        log.info("Starting Pod Crash Notifier Operator");
+        Operator operator = new Operator();
+        operator.installShutdownHook();
+        operator.start();
+        log.info("Operator started successfully");
+    }
+}
+```
+
+- [ ] Criar `src/main/resources/logback.xml`
+
+```xml
+<configuration>
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+    <logger name="io.crashnotifier" level="INFO"/>
+    <logger name="io.javaoperatorsdk" level="INFO"/>
+    <logger name="io.fabric8" level="WARN"/>
+    <root level="WARN">
+        <appender-ref ref="STDOUT"/>
+    </root>
+</configuration>
+```
+
+## Verificacao
+
+- [ ] Rodar `mvn compile` -- deve passar
+
+## Commit
+
+- [ ] `feat: scaffold Maven project with JOSDK dependencies`

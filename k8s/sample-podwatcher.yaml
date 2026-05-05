@@ -4,16 +4,24 @@ metadata:
   name: my-watcher
 spec:
   webhook:
-    url: "https://flow.ciandt.com/advanced-flows/api/v1/run/YOUR-FLOW-ID?version=production&stream=false"
+    url: "https://flow.ciandt.com/advanced-flows/api/v1/run/YOUR-FLOW-ID?stream=false"
     headers:
       - name: "FlowToken"
-        value: "${FLOW_TOKEN}"
+        value: "${auth.token}"
     bodyTemplate: |
       {
         "output_type": "text",
         "input_type": "text",
         "input_value": "{\"podName\":\"${podName}\",\"namespace\":\"${namespace}\",\"problemType\":\"${problemType}\",\"containerName\":\"${containerName}\",\"imageName\":\"${imageName}\",\"restartCount\":${restartCount},\"events\":\"${events}\",\"logs\":\"${logs}\"}"
       }
+    auth:
+      refreshUrl: "https://flow.ciandt.com/login-service/v1/auth/token/validate"
+      refreshBody: |
+        {"token": "${auth.token}", "refreshToken": "${auth.refreshToken}"}
+      tokenJsonPath: "$.token"
+      refreshTokenJsonPath: "$.refreshToken"
+      token: "YOUR-TOKEN-HERE"
+      refreshToken: "YOUR-REFRESH-TOKEN-HERE"
   detections:
     crashLoopBackOff: true
     restartThreshold: 5

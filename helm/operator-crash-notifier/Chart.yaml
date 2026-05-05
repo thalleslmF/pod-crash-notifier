@@ -1,0 +1,6 @@
+apiVersion: v2
+name: operator-crash-notifier
+description: Kubernetes operator that watches pods for crashes and sends diagnostics to a webhook
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
